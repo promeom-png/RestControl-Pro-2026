@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RestMetrics - Business Intelligence</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Librería para leer Excel -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/lucide-static@0.321.0/font/lucide.css" rel="stylesheet">
+    <style>
+        .excel-input:focus { outline: 2px solid #16a34a; background-color: #f0fdf4; }
+        .franchise-bg { background-color: #fff7ed; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .table-data input { width: 100%; height: 100%; border: none; padding: 6px; text-align: center; font-size: 11px; background: transparent; }
+        .table-data th { font-size: 10px; white-space: nowrap; padding: 8px; text-align: center; border-color: #334155; }
+        .bg-target { background-color: #f0fdf4 !important; }
+        /* Botones de restaurante más grandes */
+        .res-btn { padding: 0.75rem 1.5rem; font-size: 1rem; font-weight: 700; min-width: 140px; }
+    </style>
+</head>
+<body class="bg-slate-50 font-sans text-slate-800">
+    <div id="app" class="flex h-screen overflow-hidden flex-col md:flex-row">
+        
+        <!-- Mobile Header -->
+        <div class="md:hidden bg-slate-900 text-white p-4 flex justify-between items-center shrink-0">
+            <span class="font-bold text-green-500 tracking-tight uppercase">RestMetrics</span>
+            <button @click="showMobileMenu = !showMobileMenu" class="p-2 bg-slate-800 rounded"><i class="lucide-menu"></i></button>
+        </div>
+
+        <!-- Sidebar -->
+        <aside :class="{'hidden': !showMobileMenu && isMobile, 'flex': showMobileMenu || !isMobile}" 
+               class="w-full md:w-64 bg-slate-900 text-white flex-col shrink-0 z-50 absolute md:relative h-full">
+            <div class="p-8 border-b border-slate-800 text-center">
+                <h1 class="text-2xl font-black text-green-500 tracking-tighter uppercase italic">RestMetrics</h1>
+            </div>
+
+            <nav class="flex-1 p-4 space-y-2">
+                <button @click="changeView('dashboard')" :class="view === 'dashboard' ? 'bg-green-600' : 'hover:bg-slate-800'" class="w-full flex items-center gap-3 p-4 rounded-xl transition font-bold">
+                    <i class="lucide-layout-dashboard"></i> DASHBOARD
+                </button>
+                <button @click="changeView('data')" :class="view === 'data' ? 'bg-green-600' : 'hover:bg-slate-800'" class="w-full flex items-center gap-3 p-4 rounded-xl transition font-bold">
+                    <i class="lucide-edit-3"></i> ENTRADA DATOS
+                </button>
+                <button @click="changeView('restaurants')" :class="view === 'restaurants' ? 'bg-green-600' : 'hover:bg-slate-800'" class="w-full flex items-center gap-3 p-4 rounded-xl transition font-bold">
+                    <i class="lucide-settings"></i> CONFIG / EXCEL
+                </button>
+            </nav>
+            
+            <div class="p-6 border-t border-slate-800">
+                <a href="https://smileconsultores.com" target="_blank" class="text-[12px] text-slate-400 hover:text-white transition font-medium">
+                    Hand made by smileconsultores
+                </a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col overflow-hidden w-full">
+            
+            <!-- DASHBOARD -->
+            <div v-if="view === 'dashboard'" class="flex-1 flex flex-col overflow-hidden">
+                <header class="bg-white border-b p-6 shadow-sm z-10">
+                    <div class="flex flex-col gap-6">
+                        <div class="flex flex-wrap gap-2 justify-center">
+                            <button @click="toggleAllRestaurants" class="res-btn border rounded bg-slate-100 text-slate-600">TODOS</button>
+                            <button v-for="r in restaurants" :key="r.id" @click="toggleRes(r.id)"
+                                :class="selectedRestaurants.includes(r.id) ? (r.isFranchise ? 'bg-orange-600 text-white' : 'bg-green-600 text-white') : 'bg-white text-slate-400 border'"
+                                class="res-btn rounded shadow-sm transition uppercase">
+                                {{ r.name }}
+                            </button>
+                        </div>
+                        <div class="flex justify-center gap-8 border-t pt-4">
+                            <div class="flex flex-col items-center">
+                                <label class="text-[10px] uppercase font-black text-slate-400">Año de Análisis</label>
+                                <select v-model="filters.year" class="font-bold text-base bg-transparent text-center focus:ring-0">
+                                    <option v-for="y in [2024, 2025, 2026]" :value="y">{{y}}</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col items-center border-l pl-8">
+                                <label class="text-[10px] uppercase font-black text-slate-400">Periodo (Meses)</label>
+                                <div class="flex items-center gap-2">
+                                    <select v-model="filters.startMonth" class="font-bold text-base bg-transparent focus:ring-0"><option v-for="(m, i) in months" :value="i">{{m}}</option></select>
+                                    <span class="font-black text-slate-300">→</span>
+                                    <select v-model="filters.endMonth" class="font-bold text-base bg-transparent focus:ring-0"><option v-for="(m, i) in months" :value="i">{{m}}</option></select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </header>
+
+                <div class="flex-1 overflow-y-auto p-6 space-y-6">
+                    <!-- Dashboard Ventas -->
+                    <div class="bg-white rounded-2xl shadow-sm border overflow-x-auto">
+                        <div class="p-4 bg-slate-50 border-b flex justify-between items-center">
+                            <span class="font-black text-xs uppercase text-slate-500">Análisis Operativo (Ventas Netas)</span>
+                            <span class="text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded font-bold" v-if="vatSettings.enabled">IVA {{vatSettings.rate}}% Deducido</span>
+                        </div>
+                        <table class="w-full text-[13px]">
+                            <thead class="bg-white text-slate-400 uppercase text-[10px] font-black border-b">
+                                <tr>
+                                    <th class="p-4 text-left">Canal de Venta</th>
+                                    <th class="p-4 text-center">Venta Neta</th>
+                                    <th class="p-4 text-center">Desv/a.a.</th>
+                                    <th class="p-4 text-center border-r">Desv/Obj</th>
+                                    <th class="p-4 text-center">Clientes</th>
+                                    <th class="p-4 text-center border-r">Pax/a.a.</th>
+                                    <th class="p-4 text-center">Ticket Medio</th>
+                                    <th class="p-4 text-center">TM/a.a.</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                                <tr v-for="row in salesData" :key="row.label" :class="{'font-bold bg-green-50/50': row.isTotal}">
+                                    <td class="p-4 border-r">{{ row.label }}</td>
+                                    <td class="p-4 text-center">{{ formatInt(row.val) }}</td>
+                                    <td class="p-4 text-center font-bold" :class="row.vsLY >= 0 ? 'text-green-600' : 'text-red-500'">{{ formatPct2(row.vsLY) }}</td>
+                                    <td class="p-4 text-center border-r font-bold" :class="row.vsObj >= 0 ? 'text-green-600' : 'text-red-500'">{{ formatPct2(row.vsObj) }}</td>
+                                    <td class="p-4 text-center">{{ formatInt(row.pax) }}</td>
+                                    <td class="p-4 text-center border-r" :class="row.paxLY >= 0 ? 'text-green-600' : 'text-red-500'">{{ formatPct2(row.paxLY) }}</td>
+                                    <td class="p-4 text-center font-black text-green-700">{{ formatDec(row.tm) }}</td>
+                                    <td class="p-4 text-center" :class="row.tmLY >= 0 ? 'text-green-600' : 'text-red-500'">{{ formatPct2(row.tmLY) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- KPI Cards -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="bg-white rounded-2xl shadow-sm border p-6 text-center">
+                            <h4 class="text-[10px] uppercase font-black text-slate-400 mb-2">Personal / Vta Neta</h4>
+                            <p :class="kpis.staffPct > kpis.staffTarget ? 'text-red-500' : 'text-green-600'" class="text-3xl font-black">{{ formatPct2(kpis.staffPct) }}</p>
+                            <p class="text-[10px] text-slate-400 mt-1">Objetivo: {{formatDec(kpis.staffTarget)}}%</p>
+                        </div>
+                        <div class="bg-white rounded-2xl shadow-sm border p-6 text-center">
+                            <h4 class="text-[10px] uppercase font-black text-slate-400 mb-2">Compras / Vta Neta</h4>
+                            <p :class="kpis.foodPct > kpis.foodTarget ? 'text-red-500' : 'text-green-600'" class="text-3xl font-black">{{ formatPct2(kpis.foodPct) }}</p>
+                            <p class="text-[10px] text-slate-400 mt-1">Objetivo: {{formatDec(kpis.foodTarget)}}%</p>
+                        </div>
+                        <div class="bg-white rounded-2xl shadow-sm border p-6 text-center">
+                            <h4 class="text-[10px] uppercase font-black text-slate-400 mb-2">Venta/Mesa</h4>
+                            <p class="text-3xl font-black text-slate-700">{{ formatInt(kpis.salesPerTable) }}</p>
+                        </div>
+                        <div class="bg-white rounded-2xl shadow-sm border p-6 text-center">
+                            <h4 class="text-[10px] uppercase font-black text-slate-400 mb-2">Venta/EFT</h4>
+                            <p class="text-3xl font-black text-slate-700">{{ formatInt(kpis.salesPerEmployee) }}</p>
+                        </div>
+                    </div>
+
+                    <!-- Charts -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 pb-20">
+                        <div class="bg-white p-6 rounded-2xl shadow-sm border"><canvas id="chartSales" height="180"></canvas></div>
+                        <div class="bg-white p-6 rounded-2xl shadow-sm border"><canvas id="chartTM" height="180"></canvas></div>
+                        <div class="bg-white p-6 rounded-2xl shadow-sm border"><canvas id="chartPAX" height="180"></canvas></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ENTRADA DE DATOS -->
+            <div v-if="view === 'data'" class="flex-1 flex flex-col overflow-hidden">
+                <header class="bg-white border-b p-4 flex flex-wrap items-center gap-4 shadow-sm justify-between">
+                    <select v-model="activeDataTab" class="border rounded p-2 text-sm font-bold w-full md:w-64 bg-slate-50">
+                        <option v-for="r in restaurants" :key="r.id" :value="r.id">{{ r.name }}</option>
+                    </select>
+                    <select v-model="filters.year" class="border rounded p-2 text-sm bg-slate-50 font-bold">
+                        <option v-for="y in [2024,2025,2026]" :value="y">{{y}}</option>
+                    </select>
+                    <span class="text-xs text-green-600 font-bold px-3 py-1 bg-green-50 rounded-full border border-green-200">DATOS GUARDADOS EN NAVEGADOR</span>
+                </header>
+
+                <div class="p-4 flex-1 overflow-auto bg-slate-200">
+                    <div class="bg-white shadow-xl rounded-xl border border-slate-300 overflow-hidden">
+                        <table class="w-full border-collapse table-data">
+                            <thead class="bg-slate-800 text-white text-[9px] uppercase font-bold">
+                                <tr>
+                                    <th class="p-2 border border-slate-700 bg-slate-900 sticky left-0 z-20">Mes</th>
+                                    <th v-for="f in realDataFields" class="p-2 border border-slate-700">{{f}}</th>
+                                    <th v-for="obj in targetFields" class="p-2 border border-slate-900 bg-green-900">{{obj}}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(m, midx) in months" :key="midx" class="hover:bg-green-50">
+                                    <td class="p-2 border bg-slate-100 font-bold sticky left-0 z-10 text-[10px] text-center">{{ m }}</td>
+                                    <td v-for="f in realDataFields" class="border border-slate-200 p-0">
+                                        <input type="number" v-model.number="getRecord(activeDataTab, filters.year, midx)[f]" class="excel-input" @input="saveData">
+                                    </td>
+                                    <td v-for="obj in targetFields" class="border border-slate-300 p-0 bg-target">
+                                        <input type="number" v-model.number="getRecord(activeDataTab, filters.year, midx)[obj]" class="excel-input font-bold text-green-800" @input="saveData">
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- VAT Settings -->
+                    <div class="mt-6 bg-white p-6 rounded-xl border shadow-sm max-w-2xl mx-auto">
+                        <h3 class="font-black text-sm uppercase mb-4 text-slate-400">Configuración Fiscal de Ventas</h3>
+                        <div class="flex items-center gap-6">
+                            <div class="flex items-center gap-2">
+                                <input type="checkbox" v-model="vatSettings.enabled" @change="saveSettings" id="vatToggle" class="w-5 h-5 accent-green-600">
+                                <label for="vatToggle" class="text-sm font-bold">¿Los datos de ventas incluyen IVA?</label>
+                            </div>
+                            <div v-if="vatSettings.enabled" class="flex items-center gap-2 border-l pl-6">
+                                <label class="text-sm">Tipo aplicado (%):</label>
+                                <input type="number" v-model.number="vatSettings.rate" @input="saveSettings" class="w-16 border rounded p-1 text-center font-bold">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RESTAURANTES & EXCEL -->
+            <div v-if="view === 'restaurants'" class="flex-1 overflow-y-auto p-6 space-y-8">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <!-- Configuración Restaurantes -->
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center">
+                            <h2 class="text-xl font-black uppercase tracking-tight">Mis Restaurantes</h2>
+                            <button @click="addRestaurant" class="bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-lg">+ AÑADIR</button>
+                        </div>
+                        <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
+                            <table class="w-full text-xs">
+                                <thead class="bg-slate-100 uppercase text-[9px] text-slate-500 font-black">
+                                    <tr>
+                                        <th class="p-4 text-center">Código</th>
+                                        <th class="p-4 text-left">Nombre Comercial</th>
+                                        <th class="p-4 text-center">Tipo</th>
+                                        <th class="p-4 text-center">Mesas</th>
+                                        <th class="p-4 text-center"></th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y">
+                                    <tr v-for="r in restaurants" :key="r.id" :class="{'franchise-bg': r.isFranchise}">
+                                        <td class="p-2"><input v-model="r.code" @change="saveMeta" class="border rounded p-2 w-16 text-center bg-white shadow-inner"></td>
+                                        <td class="p-2"><input v-model="r.name" @change="saveMeta" class="border rounded p-2 w-full font-bold bg-white shadow-inner" :class="{'text-orange-600': r.isFranchise}"></td>
+                                        <td class="p-2 text-center">
+                                            <select v-model="r.isFranchise" @change="saveMeta" class="border rounded p-1 text-[10px] bg-white">
+                                                <option :value="false">PROPIO</option>
+                                                <option :value="true">FRANQUICIA</option>
+                                            </select>
+                                        </td>
+                                        <td class="p-2 text-center"><input type="number" v-model.number="r.tables" @change="saveMeta" class="border rounded p-2 w-12 text-center bg-white"></td>
+                                        <td class="p-2 text-center"><button @click="deleteRes(r.id)" class="text-red-400 p-2"><i class="lucide-trash text-lg"></i></button></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Importador Excel -->
+                    <div class="space-y-4">
+                        <h2 class="text-xl font-black uppercase tracking-tight">Importación Masiva (Excel)</h2>
+                        <div class="bg-green-50 border-2 border-dashed border-green-200 p-8 rounded-2xl text-center space-y-4">
+                            <i class="lucide-file-spreadsheet text-4xl text-green-600"></i>
+                            <p class="text-sm font-medium">Sube tu archivo para cargar un año completo</p>
+                            <input type="file" id="excelInput" class="hidden" @change="handleExcel" accept=".xlsx, .xls">
+                            <div class="flex flex-col gap-2">
+                                <button @click="triggerExcel" class="bg-green-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg">SELECCIONAR EXCEL</button>
+                                <button @click="downloadTemplate" class="text-xs text-green-700 underline font-bold">Descargar Plantilla Vacía</button>
+                            </div>
+                        </div>
+
+                        <!-- Tutorial -->
+                        <div class="bg-white p-6 rounded-2xl border shadow-sm">
+                            <h3 class="font-black text-xs uppercase mb-3 text-slate-400">Guía de Importación Correcta</h3>
+                            <ul class="text-[11px] space-y-2 text-slate-600">
+                                <li class="flex gap-2"><strong>1.</strong> Las columnas deben llamarse exactamente como en la tabla (V. PDA, Pax PDA, etc.).</li>
+                                <li class="flex gap-2"><strong>2.</strong> El archivo debe contener los 12 meses en orden.</li>
+                                <li class="flex gap-2"><strong>3.</strong> Los nombres de los locales en el Excel deben coincidir con los creados aquí.</li>
+                                <li class="flex gap-2"><strong>4.</strong> Se recomienda exportar primero un backup para ver la estructura.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted, watch } = Vue;
+
+        createApp({
+            setup() {
+                const view = ref('dashboard');
+                const isMobile = ref(window.innerWidth < 768);
+                const showMobileMenu = ref(false);
+                const activeDataTab = ref(1);
+                const selectedRestaurants = ref([]);
+                const filters = ref({ year: 2024, startMonth: 0, endMonth: 11 });
+                const vatSettings = ref({ enabled: true, rate: 10 });
+                const charts = { sales: null, tm: null, pax: null };
+                
+                const restaurants = ref([
+                    { id: 1, code: '001', name: 'GRAN VÍA', tables: 35, isFranchise: false },
+                    { id: 2, code: '002', name: 'CASTELLANA', tables: 45, isFranchise: false }
+                ]);
+
+                const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+                const realDataFields = ['sales_pda', 'pax_pda', 'sales_auto', 'pax_auto', 'sales_deliv', 'pax_deliv', 'staff_cost', 'c1', 'c5', 'employees'];
+                const targetFields = ['target_sales', 'target_staff_pct', 'target_food_pct'];
+                
+                const db = ref([]);
+
+                const initDB = () => {
+                    const savedMeta = localStorage.getItem('rm_meta_v1');
+                    if(savedMeta) restaurants.value = JSON.parse(savedMeta);
+                    const savedData = localStorage.getItem('rm_db_v1');
+                    if(savedData) db.value = JSON.parse(savedData);
+                    const savedVat = localStorage.getItem('rm_vat_v1');
+                    if(savedVat) vatSettings.value = JSON.parse(savedVat);
+
+                    if(selectedRestaurants.value.length === 0 && restaurants.value.length > 0) {
+                        selectedRestaurants.value = [restaurants.value[0].id];
+                        activeDataTab.value = restaurants.value[0].id;
+                    }
+                    setTimeout(updateCharts, 500);
+                };
+
+                const changeView = (v) => { view.value = v; showMobileMenu.value = false; if(v==='dashboard') setTimeout(updateCharts, 300); };
+                
+                const getRecord = (resId, year, month) => {
+                    let rec = db.value.find(r => r.resId === resId && r.year === year && r.month === month);
+                    if (!rec) {
+                        rec = { year, month, resId, sales_pda:0, pax_pda:0, sales_auto:0, pax_auto:0, sales_deliv:0, pax_deliv:0, staff_cost:0, c1:0, c5:0, employees:0, target_sales:0, target_staff_pct:32, target_food_pct:30 };
+                        db.value.push(rec);
+                    }
+                    return rec;
+                };
+
+                const saveData = () => localStorage.setItem('rm_db_v1', JSON.stringify(db.value));
+                const saveMeta = () => localStorage.setItem('rm_meta_v1', JSON.stringify(restaurants.value));
+                const saveSettings = () => localStorage.setItem('rm_vat_v1', JSON.stringify(vatSettings.value));
+
+                const toggleRes = (id) => {
+                    const i = selectedRestaurants.value.indexOf(id);
+                    if(i > -1) selectedRestaurants.value.splice(i, 1);
+                    else selectedRestaurants.value.push(id);
+                };
+
+                const toggleAllRestaurants = () => {
+                    if(selectedRestaurants.value.length === restaurants.value.length) selectedRestaurants.value = [];
+                    else selectedRestaurants.value = restaurants.value.map(r => r.id);
+                };
+
+                const addRestaurant = () => {
+                    const id = Date.now();
+                    restaurants.value.push({ id, code: '000', name: 'NUEVO LOCAL', tables: 10, isFranchise: false });
+                    saveMeta();
+                };
+
+                const deleteRes = (id) => { if(confirm('¿Eliminar local y todos sus datos?')) { restaurants.value = restaurants.value.filter(r => r.id !== id); db.value = db.value.filter(d => d.resId !== id); saveMeta(); saveData(); } };
+
+                // LOGICA DE CALCULO NETO
+                const toNet = (val) => vatSettings.value.enabled ? (val / (1 + (vatSettings.value.rate/100))) : val;
+
+                const calcPeriod = (year, start, end, ids) => {
+                    const subset = db.value.filter(r => ids.includes(r.resId) && r.year === year && r.month >= start && r.month <= end);
+                    const sum = (k) => subset.reduce((a, b) => a + (b[k] || 0), 0);
+                    const avg = (k) => subset.length ? (sum(k) / subset.length) : 0;
+                    
+                    const vP = toNet(sum('sales_pda')), vA = toNet(sum('sales_auto')), vD = toNet(sum('sales_deliv'));
+                    const pP = sum('pax_pda'), pA = sum('pax_auto'), pD = sum('pax_deliv');
+                    const targetVGross = sum('target_sales');
+
+                    return { 
+                        vP, pP, vA, pA, vD, pD, 
+                        staff: sum('staff_cost'), c1: sum('c1'), c5: sum('c5'), emp: sum('employees'), 
+                        totalV: vP+vA+vD, totalP: pP+pA+pD,
+                        targetV: toNet(targetVGross),
+                        targetStaff: avg('target_staff_pct'),
+                        targetFood: avg('target_food_pct')
+                    };
+                };
+
+                const salesData = computed(() => {
+                    const c = calcPeriod(filters.value.year, filters.value.startMonth, filters.value.endMonth, selectedRestaurants.value);
+                    const l = calcPeriod(filters.value.year - 1, filters.value.startMonth, filters.value.endMonth, selectedRestaurants.value);
+                    
+                    const row = (label, cv, cp, lv, lp, isT=false) => {
+                        const ctm = cp ? cv/cp : 0, ltm = lp ? lv/lp : 0;
+                        return { label, val: cv, pax: cp, tm: ctm, paxLY: lp ? (cp/lp)-1 : 0, tmLY: ltm ? (ctm/ltm)-1 : 0, vsLY: lv ? (cv/lv)-1 : 0, vsObj: isT ? (c.targetV ? (cv/c.targetV)-1 : 0) : 0, isTotal: isT };
+                    };
+                    return [ row('CAMARERO (PDA)', c.vP, c.pP, l.vP, l.pP), row('AUTOPEDIDO', c.vA, c.pA, l.vA, l.pA), row('DELIVERY', c.vD, c.pD, l.vD, l.pD), row('TOTAL CADENA (NETO)', c.totalV, c.totalP, l.totalV, l.totalP, true) ];
+                });
+
+                const kpis = computed(() => {
+                    const c = calcPeriod(filters.value.year, filters.value.startMonth, filters.value.endMonth, selectedRestaurants.value);
+                    const caps = restaurants.value.filter(r => selectedRestaurants.value.includes(r.id)).reduce((a,b) => a + b.tables, 0);
+                    return { staffCost: c.staff, staffPct: c.totalV ? (c.staff/c.totalV)*100 : 0, foodCost: c.c1 + c.c5, foodPct: c.totalV ? ((c.c1+c.c5)/c.totalV)*100 : 0, salesPerTable: caps ? c.totalV / caps : 0, salesPerEmployee: c.emp ? c.totalV / c.emp : 0, staffTarget: c.targetStaff, foodTarget: c.targetFood };
+                });
+
+                // EXCEL HANDLERS
+                const triggerExcel = () => document.getElementById('excelInput').click();
+                const handleExcel = (e) => {
+                    const file = e.target.files[0];
+                    const reader = new FileReader();
+                    reader.onload = (evt) => {
+                        const bstr = evt.target.result;
+                        const wb = XLSX.read(bstr, {type:'binary'});
+                        const wsname = wb.SheetNames[0];
+                        const ws = wb.Sheets[wsname];
+                        const data = XLSX.utils.sheet_to_json(ws);
+                        
+                        // Aquí iría la lógica de mapeo según tu Excel
+                        console.log("Datos importados:", data);
+                        alert("Excel leído con éxito. Implementando mapeo de columnas...");
+                    };
+                    reader.readAsBinaryString(file);
+                };
+
+                const updateCharts = () => {
+                    if(view.value !== 'dashboard' || !document.getElementById('chartSales')) return;
+                    const h = [];
+                    for(let i=0; i<12; i++) {
+                        const d = calcPeriod(filters.value.year, i, i, selectedRestaurants.value);
+                        h.push({ v: d.totalV, tm: d.totalP ? d.totalV/d.totalP : 0, p: d.totalP });
+                    }
+                    const cfg = (label, data, color) => ({
+                        type: 'line', data: { labels: months.map(m => m.substring(0,3)), datasets: [{ label, data, borderColor: color, backgroundColor: 'transparent', fill: false, tension: 0.4, borderWidth: 2, pointRadius: 3 }] },
+                        options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { display: true, grid: { display: false }, ticks: { font: { size: 9, weight: 'bold' } } }, x: { grid: { display: false }, ticks: { font: { size: 9, weight: 'bold' } } } } }
+                    });
+                    if(charts.sales) charts.sales.destroy(); if(charts.tm) charts.tm.destroy(); if(charts.pax) charts.pax.destroy();
+                    charts.sales = new Chart(document.getElementById('chartSales'), cfg('VENTAS', h.map(x=>x.v), '#16a34a'));
+                    charts.tm = new Chart(document.getElementById('chartTM'), cfg('TM', h.map(x=>x.tm), '#ea580c'));
+                    charts.pax = new Chart(document.getElementById('chartPAX'), cfg('PAX', h.map(x=>x.p), '#2563eb'));
+                };
+
+                watch([filters, selectedRestaurants, view], updateCharts, { deep: true });
+                const formatInt = (v) => new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(v);
+                const formatDec = (v) => new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+                const formatPct2 = (v) => (v).toFixed(2) + '%';
+                onMounted(initDB);
+                return { view, isMobile, showMobileMenu, changeView, activeDataTab, selectedRestaurants, filters, vatSettings, restaurants, months, realDataFields, targetFields, getRecord, saveData, saveMeta, saveSettings, toggleRes, toggleAllRestaurants, addRestaurant, deleteRes, triggerExcel, handleExcel, salesData, kpis, formatInt, formatDec, formatPct2 };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
